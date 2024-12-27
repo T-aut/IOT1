@@ -2,6 +2,148 @@ import time
 import can
 import random
 import threading
+import statistics
+
+# The accumulated clock offset is derived for each message ID (not device)
+# Clock offset p (p > 0.8) means the messages are highly correlated
+
+
+# SkewUpdate function: Recursive Least Squares (RLS) algorithm
+# ✅ Verbatum from paper
+
+
+def skew_update(t, e, P_prev, S_prev, lam=0.9995):
+    """
+    Perform the Recursive Least Squares (RLS) update for clock skew estimation.
+    :param t: Input data (time interval).
+    :param e: Identification error.
+    :param P_prev: Previous covariance matrix.
+    :param S_prev: Previous skew estimate.
+    :param lam: Forgetting factor.
+    :return: Updated skew (S[k]) and covariance matrix (P[k]).
+    """
+    # G_k = P_prev / (lam + P_prev * t**2)  # Gain
+    G_k = ((lam**-1) * P_prev * t) / (1 + (lam**-1) * (t**2) * P_prev)
+
+    # P_k = (1 / lam) * (P_prev - G_k * t**2 * P_prev)  # Updated covariance
+    P_k = (lam**-1) * (P_prev - G_k * t * P_prev)
+    S_k = S_prev + G_k * e  # Updated skew
+    return S_k, P_k
+
+
+delta_I = 1.0
+S = [0]  # Initial skew (accumulated)
+O_acc = [0]  # Initial accumulated offset
+P = [delta_I]  # Initial covariance matrix
+mu_T = []
+arrival_timestamps = []
+error = []
+
+# Main IDS algorithm
+# Paper introduces the condition "message has not been received for a significantly long time",
+# but does not elaborate or provide guidelines for deriving the "significantly long time", so this
+# condition check will be skipped, and skews will be updated with this time
+
+
+# To use: call this with every newly received message
+def clock_skew_estimation(arrival_timestamp, memory=20):
+    """
+    Perform clock skew estimation based on Algorithm 1.
+    :param arrival_timestamps: List of message arrival timestamps. MUST BE AT LEAST 2
+    :param delta_I: Initial covariance value.
+    :return: Estimated skew values.
+    """
+    # Initialization
+    arrival_timestamps.append(arrival_timestamp)
+    N = len(arrival_timestamps)
+
+    if N <= 1:
+        return
+
+    # # As per the paper, we are only interested in some K last message transmissions, to estimate a rolling skew, error, etc.
+    if N > memory:
+        S.pop(0)
+        O_acc.pop(0)
+        arrival_timestamps.pop(0)
+        error.pop(0)
+        mu_T.pop(0)
+        P.pop(0)
+
+    N = len(arrival_timestamps)
+
+    # Array of distances between messages
+    T = []
+
+    for n in range(1, N):
+        # Arrival timestamps and intervals
+        a_n = arrival_timestamps[n]
+        a_prev = arrival_timestamps[n - 1]
+        # Tn = a_k - a_prev  # Timestamp interval
+        T.append(a_n - a_prev)
+
+    # According to the paper, below we are in step k
+    # Average timestamp interval
+    mu_T.append(statistics.mean(T))
+
+    # Offset calculation
+    O_k = (1 / (N - 1)) * sum(
+        arrival_timestamps[i] - (arrival_timestamps[1] + (i - 1) * mu_T[-2])
+        for i in range(2, N)
+    )
+
+    O_acc.append(O_acc[-1] + abs(O_k))  # Accumulated offset
+
+    # Elapsed time
+    T_k = arrival_timestamps[-1] - arrival_timestamps[0]
+
+    # Identification error
+    error_k = O_acc[-1] - S[-1] * T_k
+    error.append(error_k)
+
+    # Update skew using RLS
+    S_k, P_k = skew_update(T_k, error_k, P[-1], S[-1])
+
+    # if (
+    #     len(error) > 2
+    #     and abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) < 3
+    # ):
+    #     print("Error within boundary")
+    # elif len(error) > 2:
+    #     print(
+    #         f"Error too large: {abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) }"
+    #     )
+
+    P.append(P_k)
+    S.append(S_k)
+
+    return S
+
+
+def CUSUM(prev_L_plus, prev_L_minus, timestamp, K_param=1.5, threshold=5):
+    if (
+        len(error) > 2
+        and abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) >= 3
+    ):
+        return prev_L_plus, prev_L_minus
+
+    positive = max(
+        0.0,
+        prev_L_plus
+        + ((error[-1] - statistics.mean(error)) / statistics.variance(error))
+        - K_param,
+    )
+    negative = max(
+        0.0,
+        prev_L_minus
+        - ((error[-1] - statistics.mean(error)) / statistics.variance(error))
+        - K_param,
+    )
+
+    if positive >= threshold or negative >= threshold:
+        print(f"Intrusion detected for timestamp {timestamp}")
+        print(f"positive: {positive} negative: {negative}")
+
+    return positive, negative
 
 
 def send_with_dynamic_timing(bus, msg, initial_period, skew_s, duration):
@@ -47,6 +189,7 @@ class CANDevice:
         arbitration_id,
         data,
         period,
+        skew_per_period,
         channel="can0",
         interface="virtual",
         bitrate=500000,
@@ -59,54 +202,102 @@ class CANDevice:
         self.arbitration_id = arbitration_id
         self.data = data
         self.period = period
+        self.skew_per_period = skew_per_period
 
     def start(self):
-        # Initialize the CAN bus
+        # Initialize local CAN bus instance
         self.bus = can.Bus(
             channel=self.channel, interface=self.interface, bitrate=self.bitrate
         )
 
-        msg = can.Message(self.arbitration_id, data=self.data, is_extended_id=True)
+        msg = can.Message(
+            arbitration_id=self.arbitration_id, data=self.data, is_extended_id=True
+        )
 
         thread = threading.Thread(
             target=send_with_dynamic_timing,
-            args=(self.bus, msg, 1.0, 0.1, 1000),
+            args=(self.bus, msg, self.period, self.skew_per_period, 1000),
             daemon=True,
         )
         self.task = thread
         thread.start()
-        # Create a CAN message with the specified data
-
-        # Start sending the message every 5 seconds
-        # self.task = can.CyclicSendTask(self.bus, msg, period=self.period)
-        # self.task = self.bus.send_periodic(msg, period=self.period)
-        # self.task.start()
 
 
-device1 = CANDevice(arbitration_id=0x123, data=[1, 2, 3], period=1)
-device2 = CANDevice(arbitration_id=0x234, data=[4, 5, 6], period=2)
-device3 = CANDevice(arbitration_id=0x356, data=[7, 8, 9], period=3)
+class CANDeviceListener:
+    def __init__(
+        self,
+        channel="can0",
+        interface="virtual",
+        bitrate=500000,
+    ):
+        self.channel = channel
+        self.interface = interface
+        self.bitrate = bitrate
+        self.bus = None
+        self.task = None
 
-try:
-    bus = can.Bus(channel="can0", interface="virtual", bitrate=500000)
+    def start(self):
+        # Initialize local CAN bus instance
+        self.bus = can.Bus(
+            channel=self.channel, interface=self.interface, bitrate=self.bitrate
+        )
+
+        L_plus = 0.0
+        L_minus = 0.0
+
+        while True:
+            try:
+                message = self.bus.recv(timeout=1.0)
+                if message:
+                    clock_skew_estimation(message.timestamp)
+                    if len(error) >= 2:
+                        L_plus, L_minus = CUSUM(L_plus, L_minus, message.timestamp)
+
+                    timestamp = time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
+                    )
+
+                    # CAUTION: message.str() truncates the timestamp by 1 digit after period (lost accuracy via print)
+                    print(f"[{timestamp}] Received: {message}")
+            except can.CanError as e:
+                print(f"Error reading from CAN bus: {e}")
+
+
+# try:
+#     bus = can.Bus(channel="can0", interface="virtual", bitrate=500000)
+#     device1.start()
+#     device2.start()
+#     # device3.start()
+#     last_message_timestamp = None
+#     while True:
+#         try:
+#             message = bus.recv(timeout=1.0)
+
+#             if message:
+#                 clock_skew_estimation(message.timestamp)
+#                 if len(S) >= 2:
+#                     L_plus, L_minus = CUSUM(L_plus, L_minus, message.timestamp)
+
+#                 timestamp = time.strftime(
+#                     "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
+#                 )
+#                 print(
+#                     f"[{timestamp}] [diff: {message.timestamp - last_message_timestamp if last_message_timestamp is not None else 0}] Received: {message}"
+#                 )
+#                 last_message_timestamp = message.timestamp
+#         except can.CanError as e:
+#             print(f"Error reading from CAN bus: {e}")
+# except KeyboardInterrupt:
+#     print("Stopping CAN device.")
+# finally:
+#     bus.shutdown()
+
+# Simulated example
+if __name__ == "__main__":
+    device1 = CANDeviceListener()
+    deviceA = CANDevice(
+        arbitration_id=0xA, data=[1, 2, 3], period=2, skew_per_period=0.01
+    )
+
+    deviceA.start()
     device1.start()
-    # device2.start()
-    # device3.start()
-    last_message_timestamp = None
-    while True:
-        try:
-            message = bus.recv(timeout=1.0)
-            if message:
-                timestamp = time.strftime(
-                    "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
-                )
-                print(
-                    f"[{timestamp}] [diff: {message.timestamp - last_message_timestamp if last_message_timestamp is not None else 0}] Received: {message}"
-                )
-                last_message_timestamp = message.timestamp
-        except can.CanError as e:
-            print(f"Error reading from CAN bus: {e}")
-except KeyboardInterrupt:
-    print("Stopping CAN device.")
-finally:
-    bus.shutdown()
