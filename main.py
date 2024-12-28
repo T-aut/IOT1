@@ -223,6 +223,8 @@ class CANDeviceListener:
         self.bitrate = bitrate
         self.bus = None
         self.task = None
+        self.skew_map = {}  # This store the couple [ ID | Estimated CK (Clock Skews) ]
+        self.skew_offset_map = {}  # This store the couple [ ID | Acc Offset ] 
 
     def start(self):
         # Initialize local CAN bus instance
@@ -237,7 +239,20 @@ class CANDeviceListener:
             try:
                 message = self.bus.recv(timeout=1.0)
                 if message:
-                    clock_skew_estimation(message.timestamp)
+                    # store the skew estimation value here 
+                    skew_est_value = clock_skew_estimation(message.timestamp) 
+
+                    if skew_est_value:
+                        # store couple ID <-> Est Skew
+                        if message.arbitration_id not in self.skew_map:
+                            self.skew_map[message.arbitration_id] = []
+                        self.skew_map[message.arbitration_id].append(skew_est_value[-1])
+
+                        # store couple ID <-> Offset
+                        if message.arbitration_id not in self.skew_offset_map:
+                            self.skew_offset_map[message.arbitration_id] = []
+                        self.skew_offset_map[message.arbitration_id].append(O_acc[-1])
+
                     if len(error) >= 2:
                         L_plus, L_minus = CUSUM(L_plus, L_minus, message.timestamp)
 
@@ -247,6 +262,15 @@ class CANDeviceListener:
 
                     # CAUTION: message.str() truncates the timestamp by 1 digit after period (lost accuracy via print)
                     print(f"[{timestamp}] Received: {message}")
+
+                    # Added for Logging
+                    if self.skew_map and self.skew_offset_map:
+                        print(f"ID: [{message.arbitration_id}] | Skews : {self.skew_map[message.arbitration_id]}")
+                        print(f"ID: [{message.arbitration_id}] | Offsets : {self.skew_offset_map[message.arbitration_id]}")
+
+
+                    # We should include the logic for finger printing here
+
             except can.CanError as e:
                 print(f"Error reading from CAN bus: {e}")
 
@@ -283,9 +307,17 @@ class CANDeviceListener:
 # Simulated example
 if __name__ == "__main__":
     device1 = CANDeviceListener()
-    deviceA = CANDevice(
-        arbitration_id=0xA, data=[1, 2, 3], period=2, skew_per_period=0.01
-    )
 
+    deviceA = CANDevice(
+        arbitration_id=0xAA, data=[0, 0, 0], period=2, skew_per_period=0.01
+    )
     deviceA.start()
+    # Testing figerprint 
+    deviceB = CANDevice(
+        arbitration_id=0xFF, data=[1, 1, 1], period=2, skew_per_period=0.02
+    )
+    deviceB.start()
+
+    
+    
     device1.start()
