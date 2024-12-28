@@ -1,17 +1,11 @@
-import time
-import can
-import random
-import threading
 import statistics
+import threading
+import time
 
-# The accumulated clock offset is derived for each message ID (not device)
-# Clock offset p (p > 0.8) means the messages are highly correlated
+import can
 
 
 # SkewUpdate function: Recursive Least Squares (RLS) algorithm
-# ✅ Verbatum from paper
-
-
 def skew_update(t, e, P_prev, S_prev, lam=0.9995):
     """
     Perform the Recursive Least Squares (RLS) update for clock skew estimation.
@@ -22,22 +16,12 @@ def skew_update(t, e, P_prev, S_prev, lam=0.9995):
     :param lam: Forgetting factor.
     :return: Updated skew (S[k]) and covariance matrix (P[k]).
     """
-    # G_k = P_prev / (lam + P_prev * t**2)  # Gain
     G_k = ((lam**-1) * P_prev * t) / (1 + (lam**-1) * (t**2) * P_prev)
 
-    # P_k = (1 / lam) * (P_prev - G_k * t**2 * P_prev)  # Updated covariance
     P_k = (lam**-1) * (P_prev - G_k * t * P_prev)
     S_k = S_prev + G_k * e  # Updated skew
     return S_k, P_k
 
-
-delta_I = 1.0
-S = [0]  # Initial skew (accumulated)
-O_acc = [0]  # Initial accumulated offset
-P = [delta_I]  # Initial covariance matrix
-mu_T = []
-arrival_timestamps = []
-error = []
 
 # Main IDS algorithm
 # Paper introduces the condition "message has not been received for a significantly long time",
@@ -46,12 +30,11 @@ error = []
 
 
 # To use: call this with every newly received message
-def clock_skew_estimation(arrival_timestamp, memory=20):
+def clock_skew_estimation(
+    arrival_timestamp, S, P, arrival_timestamps, O_acc, error, mu_T, memory=20
+):
     """
-    Perform clock skew estimation based on Algorithm 1.
-    :param arrival_timestamps: List of message arrival timestamps. MUST BE AT LEAST 2
-    :param delta_I: Initial covariance value.
-    :return: Estimated skew values.
+    Perform clock skew estimation based on Algorithm 1 (from the paper).
     """
     # Initialization
     arrival_timestamps.append(arrival_timestamp)
@@ -60,7 +43,7 @@ def clock_skew_estimation(arrival_timestamp, memory=20):
     if N <= 1:
         return
 
-    # # As per the paper, we are only interested in some K last message transmissions, to estimate a rolling skew, error, etc.
+    # As per the paper, we are only interested in some K last message transmissions, to estimate a rolling skew, error, etc.
     if N > memory:
         S.pop(0)
         O_acc.pop(0)
@@ -78,7 +61,6 @@ def clock_skew_estimation(arrival_timestamp, memory=20):
         # Arrival timestamps and intervals
         a_n = arrival_timestamps[n]
         a_prev = arrival_timestamps[n - 1]
-        # Tn = a_k - a_prev  # Timestamp interval
         T.append(a_n - a_prev)
 
     # According to the paper, below we are in step k
@@ -103,28 +85,25 @@ def clock_skew_estimation(arrival_timestamp, memory=20):
     # Update skew using RLS
     S_k, P_k = skew_update(T_k, error_k, P[-1], S[-1])
 
-    # if (
-    #     len(error) > 2
-    #     and abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) < 3
-    # ):
-    #     print("Error within boundary")
-    # elif len(error) > 2:
-    #     print(
-    #         f"Error too large: {abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) }"
-    #     )
-
     P.append(P_k)
     S.append(S_k)
 
     return S
 
 
-def CUSUM(prev_L_plus, prev_L_minus, timestamp, K_param=1.5, threshold=5):
+def CUSUM(
+    prev_L_plus,
+    prev_L_minus,
+    timestamp,
+    error,
+    K_param=1.5,
+    threshold=5,
+):
     if (
         len(error) > 2
         and abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) >= 3
     ):
-        return prev_L_plus, prev_L_minus
+        return prev_L_plus, prev_L_minus, False
 
     positive = max(
         0.0,
@@ -139,14 +118,16 @@ def CUSUM(prev_L_plus, prev_L_minus, timestamp, K_param=1.5, threshold=5):
         - K_param,
     )
 
+    is_intrusion = False
     if positive >= threshold or negative >= threshold:
+        is_intrusion = True
         print(f"Intrusion detected for timestamp {timestamp}")
         print(f"positive: {positive} negative: {negative}")
 
-    return positive, negative
+    return positive, negative, is_intrusion
 
 
-def send_with_dynamic_timing(bus, msg, initial_period, skew_s, duration):
+def send_with_dynamic_timing(bus, msg, initial_period, skew_s, message_count):
     """
     Sends a CAN message periodically with an artificial time skew using a loop.
 
@@ -157,39 +138,28 @@ def send_with_dynamic_timing(bus, msg, initial_period, skew_s, duration):
         skew_s: Skew in seconds
         duration: Total duration to run the periodic sending.
     """
-    start_time = time.time()  # Track the start time
-    elapsed_time = 0  # Track elapsed time
+    current_message_count = 0
     current_period = initial_period
 
-    while elapsed_time < duration:
-        # send_time = time.time()  # Capture the time at the start of the loop
-
-        # Send the CAN message
+    while current_message_count < message_count:
         try:
             bus.send(msg)
-            # print(f"Message sent at {time.time() - start_time:.2f}s")
         except can.CanError as e:
             print(f"Error sending message: {e}")
 
-        # Compute the next period with skew
-        current_period = max(
-            0, initial_period + skew_s
-        )  # Ensure period is non-negative
-
-        # Sleep for the computed period
+        current_period = max(0, initial_period + skew_s)
         time.sleep(current_period)
 
-        # Update elapsed time
-        elapsed_time = time.time() - start_time
+        current_message_count += 1
 
 
 class CANDevice:
     def __init__(
         self,
-        arbitration_id,
-        data,
+        messages,
         period,
         skew_per_period,
+        message_count=1000,
         channel="can0",
         interface="virtual",
         bitrate=500000,
@@ -198,11 +168,10 @@ class CANDevice:
         self.interface = interface
         self.bitrate = bitrate
         self.bus = None
-        self.task = None
-        self.arbitration_id = arbitration_id
-        self.data = data
+        self.messages = messages
         self.period = period
         self.skew_per_period = skew_per_period
+        self.message_count = message_count
 
     def start(self):
         # Initialize local CAN bus instance
@@ -210,17 +179,36 @@ class CANDevice:
             channel=self.channel, interface=self.interface, bitrate=self.bitrate
         )
 
-        msg = can.Message(
-            arbitration_id=self.arbitration_id, data=self.data, is_extended_id=True
-        )
+        for message in self.messages:
+            thread = threading.Thread(
+                target=send_with_dynamic_timing,
+                args=(
+                    self.bus,
+                    message,
+                    self.period,
+                    self.skew_per_period,
+                    self.message_count,
+                ),
+                daemon=True,
+            )
+            thread.start()
 
-        thread = threading.Thread(
-            target=send_with_dynamic_timing,
-            args=(self.bus, msg, self.period, self.skew_per_period, 1000),
-            daemon=True,
-        )
-        self.task = thread
-        thread.start()
+
+delta_I = 1.0
+
+
+# Class for storing fingerprint metrics for each arbitration_id
+class ArbitrationFingerprint:
+    def __init__(self, arbitration_id):
+        self.arbitration_id = arbitration_id
+        self.skew = [0]  # Initial skew (accumulated)
+        self.O_acc = [0]  # Initial accumulated offset
+        self.P = [delta_I]  # Initial covariance matrix
+        self.mu_T = []  # Mean of message distances (in time)
+        self.arrival_timestamps = []
+        self.error = []  # Accumulated error over time
+        self.L_positive = 0.0  # CUSUM positive boundary
+        self.L_negative = 0.0  # CUSUM negative boundary
 
 
 class CANDeviceListener:
@@ -235,8 +223,8 @@ class CANDeviceListener:
         self.bitrate = bitrate
         self.bus = None
         self.task = None
-        self.skew_map = {}  # This store the couple [ ID | Estimated CK (Clock Skews) ]
-        self.skew_offset_map = {}  # This store the couple [ ID | Acc Offset ] 
+        self.fingerprint_map = {}
+        self.number_of_intrusions = 0
 
     def start(self):
         # Initialize local CAN bus instance
@@ -244,29 +232,39 @@ class CANDeviceListener:
             channel=self.channel, interface=self.interface, bitrate=self.bitrate
         )
 
-        L_plus = 0.0
-        L_minus = 0.0
-
         while True:
             try:
                 message = self.bus.recv(timeout=1.0)
                 if message:
-                    # store the skew estimation value here 
-                    skew_est_value = clock_skew_estimation(message.timestamp) 
+                    if message.arbitration_id not in self.fingerprint_map:
+                        self.fingerprint_map[message.arbitration_id] = (
+                            ArbitrationFingerprint(message.arbitration_id)
+                        )
 
-                    if skew_est_value:
-                        # store couple ID <-> Est Skew
-                        if message.arbitration_id not in self.skew_map:
-                            self.skew_map[message.arbitration_id] = []
-                        self.skew_map[message.arbitration_id].append(skew_est_value[-1])
+                    fingerprint = self.fingerprint_map[message.arbitration_id]
 
-                        # store couple ID <-> Offset
-                        if message.arbitration_id not in self.skew_offset_map:
-                            self.skew_offset_map[message.arbitration_id] = []
-                        self.skew_offset_map[message.arbitration_id].append(O_acc[-1])
+                    clock_skew_estimation(
+                        message.timestamp,
+                        fingerprint.skew,
+                        fingerprint.P,
+                        fingerprint.arrival_timestamps,
+                        fingerprint.O_acc,
+                        fingerprint.error,
+                        fingerprint.mu_T,
+                    )
 
-                    if len(error) >= 2:
-                        L_plus, L_minus = CUSUM(L_plus, L_minus, message.timestamp)
+                    if len(fingerprint.error) >= 2:
+                        fingerprint.L_positive, fingerprint.L_negative, is_intrusion = (
+                            CUSUM(
+                                fingerprint.L_positive,
+                                fingerprint.L_negative,
+                                message.timestamp,
+                                fingerprint.error,
+                            )
+                        )
+
+                        if is_intrusion:
+                            self.number_of_intrusions += 1
 
                     timestamp = time.strftime(
                         "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
@@ -274,62 +272,71 @@ class CANDeviceListener:
 
                     # CAUTION: message.str() truncates the timestamp by 1 digit after period (lost accuracy via print)
                     print(f"[{timestamp}] Received: {message}")
+                    print(f"Intrusions: {self.number_of_intrusions}")
 
-                    # Added for Logging
-                    if self.skew_map and self.skew_offset_map:
-                        print(f"ID: [{message.arbitration_id}] | Skews : {self.skew_map[message.arbitration_id]}")
-                        print(f"ID: [{message.arbitration_id}] | Offsets : {self.skew_offset_map[message.arbitration_id]}")
+                    # From the paper Messages from the same ECUs has same clock skew.
+                    # Create groups with all mess_ID sharing the same Skew
+                    ECUs= {}
+                    for id1, fingerprint1 in self.fingerprint_map.items():
+                        for id2, fingerprint2 in self.fingerprint_map.items():
+                            if id1 == id2:
+                                continue
 
+                            # skew_diff = [
+                            # abs(a - b)
+                            # for a, b in zip(fingerprint1.skew, fingerprint2.skew)
+                            # ]
+                            
+                        
+                            skew_diff = abs(fingerprint1.skew[-1] - fingerprint2.skew[-1])
 
-                    # We should include the logic for finger printing here
+                            # We can add a threshold here
+                            if skew_diff == 0.0:
+                                if id1 not in ECUs:
+                                    ECUs[id1] = set()
+                                ECUs[id1].add(id2)
+                            else:
+                                if id2 not in ECUs:
+                                    ECUs[id2] = set()
+                                ECUs[id2].add(id2)  
 
+                    print(ECUs)
+                    
             except can.CanError as e:
                 print(f"Error reading from CAN bus: {e}")
 
 
-# try:
-#     bus = can.Bus(channel="can0", interface="virtual", bitrate=500000)
-#     device1.start()
-#     device2.start()
-#     # device3.start()
-#     last_message_timestamp = None
-#     while True:
-#         try:
-#             message = bus.recv(timeout=1.0)
+def experiment_1():
+    deviceA_messages = [
+        can.Message(arbitration_id=0x1, data=[0, 0, 0], is_extended_id=True)
+    ]
+    deviceA = CANDevice(deviceA_messages, period=2, skew_per_period=0.01)
 
-#             if message:
-#                 clock_skew_estimation(message.timestamp)
-#                 if len(S) >= 2:
-#                     L_plus, L_minus = CUSUM(L_plus, L_minus, message.timestamp)
+    deviceC = CANDeviceListener()
 
-#                 timestamp = time.strftime(
-#                     "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
-#                 )
-#                 print(
-#                     f"[{timestamp}] [diff: {message.timestamp - last_message_timestamp if last_message_timestamp is not None else 0}] Received: {message}"
-#                 )
-#                 last_message_timestamp = message.timestamp
-#         except can.CanError as e:
-#             print(f"Error reading from CAN bus: {e}")
-# except KeyboardInterrupt:
-#     print("Stopping CAN device.")
-# finally:
-#     bus.shutdown()
-
-# Simulated example
-if __name__ == "__main__":
-    device1 = CANDeviceListener()
-
-    deviceA = CANDevice(
-        arbitration_id=0xAA, data=[0, 0, 0], period=2, skew_per_period=0.01
-    )
     deviceA.start()
-    # Testing figerprint 
-    deviceB = CANDevice(
-        arbitration_id=0xFF, data=[1, 1, 1], period=2, skew_per_period=0.02
-    )
-    deviceB.start()
+    deviceC.start()
 
-    
-    
-    device1.start()
+
+def experiment_2():
+    deviceC = CANDeviceListener()
+
+    deviceA_messages = [
+        can.Message(arbitration_id=0xAA, data=[1, 0, 0], is_extended_id=True),
+        can.Message(arbitration_id=0xAB, data=[0, 1, 0], is_extended_id=True),
+    ]
+
+    deviceB_messages = [
+        can.Message(arbitration_id=0xFF, data=[1, 1, 1], is_extended_id=True)
+    ]
+
+    deviceA = CANDevice(deviceA_messages, period=2, skew_per_period=0.01)
+    deviceB = CANDevice(deviceB_messages, period=2, skew_per_period=0.02)
+    deviceB.start()
+    deviceA.start()
+    deviceC.start()
+
+
+if __name__ == "__main__":
+    # experiment_1()
+    experiment_2()
