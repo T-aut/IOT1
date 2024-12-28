@@ -1,12 +1,8 @@
-import time
-import can
-import random
-import threading
 import statistics
+import threading
+import time
 
-# The accumulated clock offset is derived for each message ID (not device)
-# Clock offset p (p > 0.8) means the messages are highly correlated
-
+import can
 
 # SkewUpdate function: Recursive Least Squares (RLS) algorithm
 # ✅ Verbatum from paper
@@ -44,7 +40,6 @@ error = []
 # but does not elaborate or provide guidelines for deriving the "significantly long time", so this
 # condition check will be skipped, and skews will be updated with this time
 
-
 # To use: call this with every newly received message
 def clock_skew_estimation(arrival_timestamp, memory=20):
     """
@@ -60,7 +55,7 @@ def clock_skew_estimation(arrival_timestamp, memory=20):
     if N <= 1:
         return
 
-    # # As per the paper, we are only interested in some K last message transmissions, to estimate a rolling skew, error, etc.
+    # As per the paper, we are only interested in some K last message transmissions, to estimate a rolling skew, error, etc.
     if N > memory:
         S.pop(0)
         O_acc.pop(0)
@@ -102,16 +97,6 @@ def clock_skew_estimation(arrival_timestamp, memory=20):
 
     # Update skew using RLS
     S_k, P_k = skew_update(T_k, error_k, P[-1], S[-1])
-
-    # if (
-    #     len(error) > 2
-    #     and abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) < 3
-    # ):
-    #     print("Error within boundary")
-    # elif len(error) > 2:
-    #     print(
-    #         f"Error too large: {abs((error[-1] - statistics.mean(error)) / statistics.variance(error)) }"
-    #     )
 
     P.append(P_k)
     S.append(S_k)
@@ -187,9 +172,10 @@ class CANDevice:
     def __init__(
         self,
         arbitration_id,
-        data,
+        messages,
         period,
         skew_per_period,
+        duration=1000,
         channel="can0",
         interface="virtual",
         bitrate=500000,
@@ -198,11 +184,11 @@ class CANDevice:
         self.interface = interface
         self.bitrate = bitrate
         self.bus = None
-        self.task = None
         self.arbitration_id = arbitration_id
-        self.data = data
+        self.messages = messages
         self.period = period
         self.skew_per_period = skew_per_period
+        self.duration = duration
 
     def start(self):
         # Initialize local CAN bus instance
@@ -210,17 +196,19 @@ class CANDevice:
             channel=self.channel, interface=self.interface, bitrate=self.bitrate
         )
 
-        msg = can.Message(
-            arbitration_id=self.arbitration_id, data=self.data, is_extended_id=True
-        )
-
-        thread = threading.Thread(
-            target=send_with_dynamic_timing,
-            args=(self.bus, msg, self.period, self.skew_per_period, 1000),
-            daemon=True,
-        )
-        self.task = thread
-        thread.start()
+        for message in self.messages:
+            thread = threading.Thread(
+                target=send_with_dynamic_timing,
+                args=(
+                    self.bus,
+                    message,
+                    self.period,
+                    self.skew_per_period,
+                    self.duration,
+                ),
+                daemon=True,
+            )
+            thread.start()
 
 
 class CANDeviceListener:
