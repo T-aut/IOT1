@@ -272,44 +272,15 @@ class CANDeviceListener:
                     
                     # CAUTION: message.str() truncates the timestamp by 1 digit after period (lost accuracy via print)
                     print(f"[{timestamp}] Received: {message}")
-                    
                     print(f"Intrusions: {self.number_of_intrusions}")
 
-                    # From the paper Messages from the same ECUs has same clock skew.
-                    # Create groups with all mess_ID sharing the same Skew
-                    # ECUs= {}
-                    # for id1, fingerprint1 in self.fingerprint_map.items():
-                    #     for id2, fingerprint2 in self.fingerprint_map.items():
-                    #         if id1 == id2:
-                    #             continue
-
-                    #         # skew_diff = [
-                    #         # abs(a - b)
-                    #         # for a, b in zip(fingerprint1.skew, fingerprint2.skew)
-                    #         # ]
-                            
-                        
-                    #         skew_diff = abs(fingerprint1.skew[-1] - fingerprint2.skew[-1])
-
-                    #         # We can add a threshold here
-                    #         if skew_diff == 0.0:
-                    #             if id1 not in ECUs:
-                    #                 ECUs[id1] = set()
-                    #             ECUs[id1].add(id2)
-                    #         else:
-                    #             if id2 not in ECUs:
-                    #                 ECUs[id2] = set()
-                    #             ECUs[id2].add(id2)  
-
-                    # print(ECUs)
-                
             except can.CanError as e:
                 print(f"Error reading from CAN bus: {e}")
         o_acc_values = []
         for id1,fingerprint in self.fingerprint_map.items():
                     o_acc_values.append(fingerprint.O_acc)
                     print(f"{o_acc_values}")
-        # Creazione del grafico
+        
         plt.figure(figsize=(10, 6))
 
         
@@ -333,11 +304,9 @@ class CANDeviceListener:
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.legend()
 
-        # Rimuovi l'asse x dal grafico
-        plt.xticks([])  # Rimuove le etichette dell'asse x
+        
+        plt.xticks([])  
         plt.tight_layout()
-
-        # Salva il grafico come PDF
         plt.savefig('./graphTrafficoTempo5_senza_x.pdf')
 
 
