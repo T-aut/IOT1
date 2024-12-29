@@ -153,6 +153,8 @@ def send_with_dynamic_timing(bus, msg, initial_period, skew_s, message_count):
 
         current_message_count += 1
 
+    bus.shutdown()
+
 
 class CANDevice:
     def __init__(
@@ -306,30 +308,62 @@ def experiment_2():
         can.Message(arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True)
     ]
 
-    deviceA = CANDevice(deviceA_messages, period=0.5, skew_per_period=0.001)
-    deviceB = CANDevice(deviceB_messages, period=0.25, skew_per_period=0.002)
+    deviceA = CANDevice(deviceA_messages, period=0.5, skew_per_period=0.01)
+    deviceB = CANDevice(deviceB_messages, period=0.25, skew_per_period=0.02)
     deviceB.start()
     deviceA.start()
     deviceC.start()
 
     plt.figure(figsize=(10, 6))
 
-    weights = {
-        "0x11": np.array(deviceC.fingerprint_map[0x11].O_acc),
-        "0x13": np.array(deviceC.fingerprint_map[0x13].O_acc),
-        "0x55": np.array(deviceC.fingerprint_map[0x55].O_acc),
-    }
-    colors = ["skyblue", "lightcoral", "lightgreen"]
+    # TODO: substitute interpolation with maping arrival_timestamps to skew!
+    time_original_x11 = np.linspace(
+        0,
+        len(deviceC.fingerprint_map[0x55].O_acc),
+        len(deviceC.fingerprint_map[0x11].O_acc),
+    )
+    time_original_x13 = np.linspace(
+        0,
+        len(deviceC.fingerprint_map[0x55].O_acc),
+        len(deviceC.fingerprint_map[0x13].O_acc),
+    )
+    time_target = np.linspace(
+        0,
+        len(deviceC.fingerprint_map[0x55].O_acc),
+        len(deviceC.fingerprint_map[0x55].O_acc),
+    )
+    x11_stretched = np.interp(
+        time_target, time_original_x11, np.array(deviceC.fingerprint_map[0x11].O_acc)
+    )
+    x13_stretched = np.interp(
+        time_target, time_original_x13, np.array(deviceC.fingerprint_map[0x13].O_acc)
+    )
 
-    for (label, weight), color in zip(weights.items(), colors):
+    # weights = {
+    #     "0x11": x11_stretched,
+    #     "0x13": x13_stretched,
+    #     "0x55": np.array(deviceC.fingerprint_map[0x55].O_acc),
+    # }
+    # colors = ["skyblue", "lightcoral", "lightgreen"]
 
-        time_dynamic = np.arange(len(weight))
-        (line,) = plt.plot(
-            time_dynamic, weight, label=label, color=color, linewidth=2.5
-        )
+    plt.plot(time_target, x11_stretched, label="0x11", linestyle="--")
+    plt.plot(time_target, x13_stretched, label="0x13", linestyle="-.")
+    plt.plot(
+        time_target,
+        np.array(deviceC.fingerprint_map[0x55].O_acc),
+        label="0x55",
+        linestyle="-",
+    )
 
-        plt.plot(time_dynamic[0], weight[0], marker="o", color=color)
-        plt.plot(time_dynamic[-1], weight[-1], marker="o", color=color)
+    # for (label, weight), color in zip(weights.items(), colors):
+
+    #     time_dynamic = np.arange(len(weight))
+    #     (line,) = plt.plot(
+    #         time_dynamic, weight, label=label, color=color, linewidth=2.5
+    #     )
+
+    #     plt.plot(time_dynamic[0], weight[0], marker="o", color=color)
+    #     plt.plot(time_dynamic[-1], weight[-1], marker="o", color=color)
 
     plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
     plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
@@ -339,7 +373,8 @@ def experiment_2():
     plt.tight_layout()
     plt.savefig("./graph2.pdf")
 
-    deviceC.bus.shutdown()
+    while not deviceC.bus._is_shutdown:
+        deviceC.bus.shutdown()
 
 
 if __name__ == "__main__":
