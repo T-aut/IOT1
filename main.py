@@ -317,28 +317,43 @@ def experiment_2():
     plt.figure(figsize=(10, 6))
 
     # TODO: substitute interpolation with maping arrival_timestamps to skew!
-    time_original_x11 = np.linspace(
-        0,
-        len(deviceC.fingerprint_map[0x55].O_acc),
-        len(deviceC.fingerprint_map[0x11].O_acc),
-    )
-    time_original_x13 = np.linspace(
-        0,
-        len(deviceC.fingerprint_map[0x55].O_acc),
-        len(deviceC.fingerprint_map[0x13].O_acc),
-    )
+    # time_original_x11 = np.linspace(
+    #     0,
+    #     len(deviceC.fingerprint_map[0x55].O_acc),
+    #     len(deviceC.fingerprint_map[0x11].O_acc),
+    # )
+    # time_original_x13 = np.linspace(
+    #     0,
+    #     len(deviceC.fingerprint_map[0x55].O_acc),
+    #     len(deviceC.fingerprint_map[0x13].O_acc),
+    # )
     time_target = np.linspace(
         0,
         len(deviceC.fingerprint_map[0x55].O_acc),
         len(deviceC.fingerprint_map[0x55].O_acc),
     )
-    x11_stretched = np.interp(
-        time_target, time_original_x11, np.array(deviceC.fingerprint_map[0x11].O_acc)
-    )
-    x13_stretched = np.interp(
-        time_target, time_original_x13, np.array(deviceC.fingerprint_map[0x13].O_acc)
-    )
+    # x11_stretched = np.interp(
+    #     time_target, time_original_x11, np.array(deviceC.fingerprint_map[0x11].O_acc)
+    # )
+    # x13_stretched = np.interp(
+    #     time_target, time_original_x13, np.array(deviceC.fingerprint_map[0x13].O_acc)
+    # )
 
+    # TODO: Implemented 
+    timestamps_x11 = deviceC.fingerprint_map[0x11].arrival_timestamps
+    timestamps_x13 = deviceC.fingerprint_map[0x13].arrival_timestamps
+    timestamps_x55 = deviceC.fingerprint_map[0x55].arrival_timestamps
+
+    x11_aligned = np.interp(
+        timestamps_x55,  
+        timestamps_x11, 
+        np.array(deviceC.fingerprint_map[0x11].O_acc)  
+    )
+    x13_aligned = np.interp(
+        timestamps_x55,
+        timestamps_x13,
+        np.array(deviceC.fingerprint_map[0x13].O_acc)
+    )
     # weights = {
     #     "0x11": x11_stretched,
     #     "0x13": x13_stretched,
@@ -346,8 +361,8 @@ def experiment_2():
     # }
     # colors = ["skyblue", "lightcoral", "lightgreen"]
 
-    plt.plot(time_target, x11_stretched, label="0x11", linestyle="--")
-    plt.plot(time_target, x13_stretched, label="0x13", linestyle="-.")
+    plt.plot(time_target, x11_aligned, label="0x11", linestyle="--")
+    plt.plot(time_target, x13_aligned, label="0x13", linestyle="-.")
     plt.plot(
         time_target,
         np.array(deviceC.fingerprint_map[0x55].O_acc),
@@ -371,7 +386,8 @@ def experiment_2():
     plt.legend()
 
     plt.tight_layout()
-    plt.savefig("./graph2.pdf")
+    plt.savefig("./graph_TODO.pdf")
+
 
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
