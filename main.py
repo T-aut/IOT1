@@ -215,6 +215,7 @@ class ArbitrationFingerprint:
 class CANDeviceListener:
     def __init__(
         self,
+        alive_time=300,
         channel="can0",
         interface="virtual",
         bitrate=500000,
@@ -223,7 +224,7 @@ class CANDeviceListener:
         self.interface = interface
         self.bitrate = bitrate
         self.bus = None
-        self.task = None
+        self.alive_time = alive_time
         self.fingerprint_map = {}
         self.number_of_intrusions = 0
 
@@ -232,84 +233,53 @@ class CANDeviceListener:
         self.bus = can.Bus(
             channel=self.channel, interface=self.interface, bitrate=self.bitrate
         )
-        start_time = time.time() + 120
+        start_time = time.time() + self.alive_time
         while time.time() < start_time:
             try:
                 message = self.bus.recv(timeout=1.0)
-                if message:
-                    if message.arbitration_id not in self.fingerprint_map:
-                        self.fingerprint_map[message.arbitration_id] = (
-                            ArbitrationFingerprint(message.arbitration_id)
-                        )
+                if not message:
+                    continue
 
-                    fingerprint = self.fingerprint_map[message.arbitration_id]
-
-                    clock_skew_estimation(
-                        message.timestamp,
-                        fingerprint.skew,
-                        fingerprint.P,
-                        fingerprint.arrival_timestamps,
-                        fingerprint.O_acc,
-                        fingerprint.error,
-                        fingerprint.mu_T,
+                if message.arbitration_id not in self.fingerprint_map:
+                    self.fingerprint_map[message.arbitration_id] = (
+                        ArbitrationFingerprint(message.arbitration_id)
                     )
 
-                    if len(fingerprint.error) >= 2:
-                        fingerprint.L_positive, fingerprint.L_negative, is_intrusion = (
-                            CUSUM(
-                                fingerprint.L_positive,
-                                fingerprint.L_negative,
-                                message.timestamp,
-                                fingerprint.error,
-                            )
+                fingerprint = self.fingerprint_map[message.arbitration_id]
+
+                clock_skew_estimation(
+                    message.timestamp,
+                    fingerprint.skew,
+                    fingerprint.P,
+                    fingerprint.arrival_timestamps,
+                    fingerprint.O_acc,
+                    fingerprint.error,
+                    fingerprint.mu_T,
+                )
+
+                if len(fingerprint.error) >= 2:
+                    fingerprint.L_positive, fingerprint.L_negative, is_intrusion = (
+                        CUSUM(
+                            fingerprint.L_positive,
+                            fingerprint.L_negative,
+                            message.timestamp,
+                            fingerprint.error,
                         )
-
-                        if is_intrusion:
-                            self.number_of_intrusions += 1
-
-                    timestamp = time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
                     )
 
-                    # CAUTION: message.str() truncates the timestamp by 1 digit after period (lost accuracy via print)
-                    print(f"[{timestamp}] Received: {message}")
-                    print(f"Intrusions: {self.number_of_intrusions}")
+                    if is_intrusion:
+                        self.number_of_intrusions += 1
+
+                timestamp = time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
+                )
+
+                # CAUTION: message.str() truncates the timestamp by 1 digit after period (lost accuracy via print)
+                print(f"[{timestamp}] Received: {message}")
+                print(f"Intrusions: {self.number_of_intrusions}")
 
             except can.CanError as e:
                 print(f"Error reading from CAN bus: {e}")
-
-        # o_acc_values = []
-        # for id1, fingerprint in self.fingerprint_map.items():
-        #     o_acc_values.append(fingerprint.O_acc)
-        #     print(f"{o_acc_values}")
-
-        plt.figure(figsize=(10, 6))
-
-        weights = {
-            "0x11": np.array(self.fingerprint_map[0x11].O_acc),
-            "0x13": np.array(self.fingerprint_map[0x13].O_acc),
-            "0x55": np.array(self.fingerprint_map[0x55].O_acc),
-        }
-        colors = ["skyblue", "lightcoral", "lightgreen"]
-
-        for (label, weight), color in zip(weights.items(), colors):
-
-            time_dynamic = np.arange(len(weight))
-            (line,) = plt.plot(
-                time_dynamic, weight, label=label, color=color, linewidth=2.5
-            )
-
-            plt.plot(time_dynamic[0], weight[0], marker="o", color=color)
-            plt.plot(time_dynamic[-1], weight[-1], marker="o", color=color)
-
-        plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
-        plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
-        plt.grid(True, linestyle="--", alpha=0.7)
-        plt.legend()
-
-        plt.xticks([])
-        plt.tight_layout()
-        plt.savefig("./graph.pdf")
 
 
 def experiment_1():
@@ -325,7 +295,7 @@ def experiment_1():
 
 
 def experiment_2():
-    deviceC = CANDeviceListener()
+    deviceC = CANDeviceListener(alive_time=300)
 
     deviceA_messages = [
         can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True),
@@ -341,6 +311,35 @@ def experiment_2():
     deviceB.start()
     deviceA.start()
     deviceC.start()
+
+    plt.figure(figsize=(10, 6))
+
+    weights = {
+        "0x11": np.array(deviceC.fingerprint_map[0x11].O_acc),
+        "0x13": np.array(deviceC.fingerprint_map[0x13].O_acc),
+        "0x55": np.array(deviceC.fingerprint_map[0x55].O_acc),
+    }
+    colors = ["skyblue", "lightcoral", "lightgreen"]
+
+    for (label, weight), color in zip(weights.items(), colors):
+
+        time_dynamic = np.arange(len(weight))
+        (line,) = plt.plot(
+            time_dynamic, weight, label=label, color=color, linewidth=2.5
+        )
+
+        plt.plot(time_dynamic[0], weight[0], marker="o", color=color)
+        plt.plot(time_dynamic[-1], weight[-1], marker="o", color=color)
+
+    plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
+    plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig("./graph2.pdf")
+
+    deviceC.bus.shutdown()
 
 
 if __name__ == "__main__":
