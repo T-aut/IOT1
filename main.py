@@ -1,9 +1,8 @@
 import statistics
 import threading
 import time
-
 import can
-
+# import matplotlib
 
 # SkewUpdate function: Recursive Least Squares (RLS) algorithm
 def skew_update(t, e, P_prev, S_prev, lam=0.9995):
@@ -44,13 +43,13 @@ def clock_skew_estimation(
         return
 
     # As per the paper, we are only interested in some K last message transmissions, to estimate a rolling skew, error, etc.
-    if N > memory:
-        S.pop(0)
-        O_acc.pop(0)
-        arrival_timestamps.pop(0)
-        error.pop(0)
-        mu_T.pop(0)
-        P.pop(0)
+    # if N > memory:
+    #     S.pop(0)
+    #     O_acc.pop(0)
+    #     arrival_timestamps.pop(0)
+    #     error.pop(0)
+    #     mu_T.pop(0)
+    #     P.pop(0)
 
     N = len(arrival_timestamps)
 
@@ -231,8 +230,9 @@ class CANDeviceListener:
         self.bus = can.Bus(
             channel=self.channel, interface=self.interface, bitrate=self.bitrate
         )
-
-        while True:
+        start_time = time.time()
+        offset_time = 0
+        while offset_time < exp_duration:
             try:
                 message = self.bus.recv(timeout=1.0)
                 if message:
@@ -269,38 +269,39 @@ class CANDeviceListener:
                     timestamp = time.strftime(
                         "%Y-%m-%d %H:%M:%S", time.localtime(message.timestamp)
                     )
-
+                    offset_time = message.timestamp - start_time
                     # CAUTION: message.str() truncates the timestamp by 1 digit after period (lost accuracy via print)
                     print(f"[{timestamp}] Received: {message}")
+                    print(f"[{offset_time}]")
                     print(f"Intrusions: {self.number_of_intrusions}")
 
                     # From the paper Messages from the same ECUs has same clock skew.
                     # Create groups with all mess_ID sharing the same Skew
-                    ECUs= {}
-                    for id1, fingerprint1 in self.fingerprint_map.items():
-                        for id2, fingerprint2 in self.fingerprint_map.items():
-                            if id1 == id2:
-                                continue
+                    # ECUs= {}
+                    # for id1, fingerprint1 in self.fingerprint_map.items():
+                    #     for id2, fingerprint2 in self.fingerprint_map.items():
+                    #         if id1 == id2:
+                    #             continue
 
-                            # skew_diff = [
-                            # abs(a - b)
-                            # for a, b in zip(fingerprint1.skew, fingerprint2.skew)
-                            # ]
+                    #         # skew_diff = [
+                    #         # abs(a - b)
+                    #         # for a, b in zip(fingerprint1.skew, fingerprint2.skew)
+                    #         # ]
                             
                         
-                            skew_diff = abs(fingerprint1.skew[-1] - fingerprint2.skew[-1])
+                    #         skew_diff = abs(fingerprint1.skew[-1] - fingerprint2.skew[-1])
 
-                            # We can add a threshold here
-                            if skew_diff == 0.0:
-                                if id1 not in ECUs:
-                                    ECUs[id1] = set()
-                                ECUs[id1].add(id2)
-                            else:
-                                if id2 not in ECUs:
-                                    ECUs[id2] = set()
-                                ECUs[id2].add(id2)  
+                    #         # We can add a threshold here
+                    #         if skew_diff == 0.0:
+                    #             if id1 not in ECUs:
+                    #                 ECUs[id1] = set()
+                    #             ECUs[id1].add(id2)
+                    #         else:
+                    #             if id2 not in ECUs:
+                    #                 ECUs[id2] = set()
+                    #             ECUs[id2].add(id2)  
 
-                    print(ECUs)
+                    # print(ECUs)
                     
             except can.CanError as e:
                 print(f"Error reading from CAN bus: {e}")
@@ -335,6 +336,9 @@ def experiment_2():
     deviceB.start()
     deviceA.start()
     deviceC.start()
+
+
+exp_duration = 10
 
 
 if __name__ == "__main__":
