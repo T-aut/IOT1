@@ -395,10 +395,10 @@ def experiment_3():
     ]
 
     O_acc_x11 = deviceC.fingerprint_map[0x11].O_acc
-    O_acc_x55 = deviceC.fingerprint_map[0x13].O_acc
+    O_acc_x13 = deviceC.fingerprint_map[0x13].O_acc
 
     plt.plot(timestamps_x11, O_acc_x11, label="0x11", linestyle="--")
-    plt.plot(timestamps_x13, O_acc_x55, label="0x13", linestyle="-.")
+    plt.plot(timestamps_x13, O_acc_x13, label="0x13", linestyle="-.")
 
     plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
     plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
