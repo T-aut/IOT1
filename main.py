@@ -312,16 +312,25 @@ def experiment_2():
     ]
 
     deviceA = CANDevice(deviceA_messages, period=0.5, skew_per_period=0.01)
-    deviceB = CANDevice(deviceB_messages, period=0.25, skew_per_period=0.02)
+    deviceB = CANDevice(deviceB_messages, period=0.5, skew_per_period=0.02)
     deviceB.start()
     deviceA.start()
     deviceC.start()
 
     plt.figure(figsize=(10, 6))
 
-    timestamps_x11 = deviceC.fingerprint_map[0x11].arrival_timestamps
-    timestamps_x13 = deviceC.fingerprint_map[0x13].arrival_timestamps
-    timestamps_x55 = deviceC.fingerprint_map[0x55].arrival_timestamps
+    timestamps_x11 = [
+        x - deviceC.fingerprint_map[0x11].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x11].arrival_timestamps
+    ]
+    timestamps_x13 = [
+        x - deviceC.fingerprint_map[0x13].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x13].arrival_timestamps
+    ]
+    timestamps_x55 = [
+        x - deviceC.fingerprint_map[0x55].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x55].arrival_timestamps
+    ]
 
     O_acc_x11 = deviceC.fingerprint_map[0x11].O_acc
     O_acc_x13 = deviceC.fingerprint_map[0x13].O_acc
