@@ -290,10 +290,13 @@ def experiment_1():
     ]
     deviceA = CANDevice(deviceA_messages, period=2, skew_per_period=0.01)
 
-    deviceC = CANDeviceListener()
+    deviceC = CANDeviceListener(alive_time=2500)
 
     deviceA.start()
     deviceC.start()
+
+    while not deviceC.bus._is_shutdown:
+        deviceC.bus.shutdown()
 
 
 def experiment_2():
@@ -316,69 +319,22 @@ def experiment_2():
 
     plt.figure(figsize=(10, 6))
 
-    # TODO: substitute interpolation with maping arrival_timestamps to skew!
-    # time_original_x11 = np.linspace(
-    #     0,
-    #     len(deviceC.fingerprint_map[0x55].O_acc),
-    #     len(deviceC.fingerprint_map[0x11].O_acc),
-    # )
-    # time_original_x13 = np.linspace(
-    #     0,
-    #     len(deviceC.fingerprint_map[0x55].O_acc),
-    #     len(deviceC.fingerprint_map[0x13].O_acc),
-    # )
-    time_target = np.linspace(
-        0,
-        len(deviceC.fingerprint_map[0x55].O_acc),
-        len(deviceC.fingerprint_map[0x55].O_acc),
-    )
-    # x11_stretched = np.interp(
-    #     time_target, time_original_x11, np.array(deviceC.fingerprint_map[0x11].O_acc)
-    # )
-    # x13_stretched = np.interp(
-    #     time_target, time_original_x13, np.array(deviceC.fingerprint_map[0x13].O_acc)
-    # )
-
-    # TODO: Implemented 
     timestamps_x11 = deviceC.fingerprint_map[0x11].arrival_timestamps
     timestamps_x13 = deviceC.fingerprint_map[0x13].arrival_timestamps
     timestamps_x55 = deviceC.fingerprint_map[0x55].arrival_timestamps
 
-    x11_aligned = np.interp(
-        timestamps_x55,  
-        timestamps_x11, 
-        np.array(deviceC.fingerprint_map[0x11].O_acc)  
-    )
-    x13_aligned = np.interp(
-        timestamps_x55,
-        timestamps_x13,
-        np.array(deviceC.fingerprint_map[0x13].O_acc)
-    )
-    # weights = {
-    #     "0x11": x11_stretched,
-    #     "0x13": x13_stretched,
-    #     "0x55": np.array(deviceC.fingerprint_map[0x55].O_acc),
-    # }
-    # colors = ["skyblue", "lightcoral", "lightgreen"]
+    O_acc_x11 = deviceC.fingerprint_map[0x11].O_acc
+    O_acc_x13 = deviceC.fingerprint_map[0x13].O_acc
+    O_acc_x55 = deviceC.fingerprint_map[0x55].O_acc
 
-    plt.plot(time_target, x11_aligned, label="0x11", linestyle="--")
-    plt.plot(time_target, x13_aligned, label="0x13", linestyle="-.")
+    plt.plot(timestamps_x11, O_acc_x11, label="0x11", linestyle="--")
+    plt.plot(timestamps_x13, O_acc_x13, label="0x13", linestyle="-.")
     plt.plot(
-        time_target,
-        np.array(deviceC.fingerprint_map[0x55].O_acc),
+        timestamps_x55,
+        O_acc_x55,
         label="0x55",
         linestyle="-",
     )
-
-    # for (label, weight), color in zip(weights.items(), colors):
-
-    #     time_dynamic = np.arange(len(weight))
-    #     (line,) = plt.plot(
-    #         time_dynamic, weight, label=label, color=color, linewidth=2.5
-    #     )
-
-    #     plt.plot(time_dynamic[0], weight[0], marker="o", color=color)
-    #     plt.plot(time_dynamic[-1], weight[-1], marker="o", color=color)
 
     plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
     plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
@@ -386,8 +342,7 @@ def experiment_2():
     plt.legend()
 
     plt.tight_layout()
-    plt.savefig("./graph_TODO.pdf")
-
+    plt.savefig("./graph_experiment_2.pdf")
 
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
