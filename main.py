@@ -119,8 +119,6 @@ def CUSUM(
         - K_param,
     )
 
-    print(f"positive {positive} threshold {threshold}")
-
     is_intrusion = False
     if positive >= threshold or negative >= threshold:
         is_intrusion = True
@@ -358,36 +356,57 @@ def experiment_2():
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
 
-def inject_fabricated_message(device, ticks, message):
-    print("start inject")
-    time.sleep(ticks)
+def inject_fabricated_message(device, seconds, message):
+    time.sleep(seconds)
     device.bus.send(message)
-    print("inject complete")
 
 def experiment_3():
-    print("started")
-    deviceC = CANDeviceListener(alive_time=300)
+    deviceC = CANDeviceListener(alive_time=600)
 
     deviceA_message = can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True)
 
-    deviceB_messages = [
-        can.Message(arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True)
-    ]
+    deviceB_message = can.Message(arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True)
 
     deviceA = CANDevice([deviceA_message], period=0.5, skew_per_period=0.01)
-    deviceB = CANDevice(deviceB_messages, period=0.25, skew_per_period=0.01)
+    deviceB = CANDevice([deviceB_message], period=0.5, skew_per_period=0.01)
 
     deviceB.start()
     deviceA.start()
 
-    print("hi")
-    injection_thread = threading.Thread(target=inject_fabricated_message, args=(deviceB, 40, can.Message(arbitration_id=0x11, data=[1, 1, 1], is_extended_id=True)))
+    injection_thread = threading.Thread(target=inject_fabricated_message, args=(deviceB, 400, deviceA_message))
     
     injection_thread.start()
 
     deviceC.start()
 
+    plt.figure(figsize=(10, 6))
 
+    timestamps_x11 = [
+        x - deviceC.fingerprint_map[0x11].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x11].arrival_timestamps
+    ]
+
+    timestamps_x55 = [
+        x - deviceC.fingerprint_map[0x55].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x55].arrival_timestamps
+    ]
+
+    O_acc_x11 = deviceC.fingerprint_map[0x11].O_acc
+    O_acc_x55 = deviceC.fingerprint_map[0x55].O_acc
+
+    plt.plot(timestamps_x11, O_acc_x11, label="0x11", linestyle="--")
+    plt.plot(timestamps_x55, O_acc_x55, label="0x55", linestyle="-.")
+
+    plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
+    plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig("./graph_experiment_3.pdf")
+
+    while not deviceC.bus._is_shutdown:
+        deviceC.bus.shutdown()
 
 if __name__ == "__main__":
     # experiment_1()
