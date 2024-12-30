@@ -196,6 +196,10 @@ class CANDevice:
             )
             thread.start()
 
+    def send_fabricated_message(self, seconds, message):
+        time.sleep(seconds)
+        self.bus.send(message)
+
 
 delta_I = 1.0
 
@@ -356,10 +360,6 @@ def experiment_2():
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
 
-def inject_fabricated_message(device, seconds, message):
-    time.sleep(seconds)
-    device.bus.send(message)
-
 def experiment_3():
     deviceC = CANDeviceListener(alive_time=600)
 
@@ -373,7 +373,7 @@ def experiment_3():
     deviceB.start()
     deviceA.start()
 
-    injection_thread = threading.Thread(target=inject_fabricated_message, args=(deviceB, 400, deviceA_message))
+    injection_thread = threading.Thread(target=deviceB.send_fabricated_message, args=(400, deviceA_message))
     
     injection_thread.start()
 
