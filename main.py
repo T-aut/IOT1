@@ -119,6 +119,8 @@ def CUSUM(
         - K_param,
     )
 
+    print(f"positive {positive} threshold {threshold}")
+
     is_intrusion = False
     if positive >= threshold or negative >= threshold:
         is_intrusion = True
@@ -392,7 +394,38 @@ def experiment_2():
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
 
+def inject_fabricated_message(device, ticks, message):
+    print("start inject")
+    time.sleep(ticks)
+    device.bus.send(message)
+    print("inject complete")
+
+def experiment_3():
+    print("started")
+    deviceC = CANDeviceListener(alive_time=300)
+
+    deviceA_message = can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True)
+
+    deviceB_messages = [
+        can.Message(arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True)
+    ]
+
+    deviceA = CANDevice([deviceA_message], period=0.5, skew_per_period=0.01)
+    deviceB = CANDevice(deviceB_messages, period=0.25, skew_per_period=0.01)
+
+    deviceB.start()
+    deviceA.start()
+
+    print("hi")
+    injection_thread = threading.Thread(target=inject_fabricated_message, args=(deviceB, 40, can.Message(arbitration_id=0x11, data=[1, 1, 1], is_extended_id=True)))
+    
+    injection_thread.start()
+
+    deviceC.start()
+
+
 
 if __name__ == "__main__":
     # experiment_1()
-    experiment_2()
+    # experiment_2()
+    experiment_3()
