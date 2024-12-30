@@ -363,17 +363,20 @@ def experiment_2():
 def experiment_3():
     deviceC = CANDeviceListener(alive_time=600)
 
-    deviceA_message = can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True)
+    deviceA_messages = [
+        can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True),
+        can.Message(arbitration_id=0x13, data=[0, 1, 0], is_extended_id=True),
+    ]
 
     deviceB_message = can.Message(arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True)
 
-    deviceA = CANDevice([deviceA_message], period=0.5, skew_per_period=0.01)
+    deviceA = CANDevice(deviceA_messages, period=0.5, skew_per_period=0.01)
     deviceB = CANDevice([deviceB_message], period=0.5, skew_per_period=0.01)
 
     deviceB.start()
     deviceA.start()
 
-    injection_thread = threading.Thread(target=deviceB.send_fabricated_message, args=(400, deviceA_message))
+    injection_thread = threading.Thread(target=deviceB.send_fabricated_message, args=(400, deviceA_messages[0]))
     
     injection_thread.start()
 
@@ -386,16 +389,16 @@ def experiment_3():
         for x in deviceC.fingerprint_map[0x11].arrival_timestamps
     ]
 
-    timestamps_x55 = [
-        x - deviceC.fingerprint_map[0x55].arrival_timestamps[0]
-        for x in deviceC.fingerprint_map[0x55].arrival_timestamps
+    timestamps_x13 = [
+        x - deviceC.fingerprint_map[0x13].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x13].arrival_timestamps
     ]
 
     O_acc_x11 = deviceC.fingerprint_map[0x11].O_acc
-    O_acc_x55 = deviceC.fingerprint_map[0x55].O_acc
+    O_acc_x55 = deviceC.fingerprint_map[0x13].O_acc
 
     plt.plot(timestamps_x11, O_acc_x11, label="0x11", linestyle="--")
-    plt.plot(timestamps_x55, O_acc_x55, label="0x55", linestyle="-.")
+    plt.plot(timestamps_x13, O_acc_x55, label="0x13", linestyle="-.")
 
     plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
     plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
