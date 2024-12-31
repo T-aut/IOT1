@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-# SkewUpdate function: Recursive Least Squares (RLS) algorithm
 def skew_update(t, e, P_prev, S_prev, lam=0.9995):
     """
     Perform the Recursive Least Squares (RLS) update for clock skew estimation.
@@ -24,18 +23,11 @@ def skew_update(t, e, P_prev, S_prev, lam=0.9995):
     return S_k, P_k
 
 
-# Main IDS algorithm
-# Paper introduces the condition "message has not been received for a significantly long time",
-# but does not elaborate or provide guidelines for deriving the "significantly long time", so this
-# condition check will be skipped, and skews will be updated with this time
-
-
-# To use: call this with every newly received message
 def clock_skew_estimation(
-    arrival_timestamp, S, P, arrival_timestamps, O_acc, error, mu_T, memory=20
+    arrival_timestamp, S, P, arrival_timestamps, O_acc, error, mu_T, memory
 ):
     """
-    Perform clock skew estimation based on Algorithm 1 (from the paper).
+    Perform clock skew estimation based on Algorithm 1 (from the paper). To use: call this with every newly received message.
     """
     # Initialization
     arrival_timestamps.append(arrival_timestamp)
@@ -45,13 +37,13 @@ def clock_skew_estimation(
         return
 
     # As per the paper, we are only interested in some K last message transmissions, to estimate a rolling skew, error, etc.
-    # if N > memory:
-    #     S.pop(0)
-    #     O_acc.pop(0)
-    #     arrival_timestamps.pop(0)
-    #     error.pop(0)
-    #     mu_T.pop(0)
-    #     P.pop(0)
+    if memory and N > memory:
+        S.pop(0)
+        O_acc.pop(0)
+        arrival_timestamps.pop(0)
+        error.pop(0)
+        mu_T.pop(0)
+        P.pop(0)
 
     N = len(arrival_timestamps)
 
@@ -64,7 +56,6 @@ def clock_skew_estimation(
         a_prev = arrival_timestamps[n - 1]
         T.append(a_n - a_prev)
 
-    # According to the paper, below we are in step k
     # Average timestamp interval
     mu_T.append(statistics.mean(T))
 
@@ -135,7 +126,7 @@ def send_with_dynamic_timing(bus, msg, initial_period, skew_s, message_count):
     Args:
         bus: CAN bus instance.
         msg: CAN message to send.
-        initial_period: Initial period between sends in seconds.
+        initial_period: Initial period between first message and last message in seconds.
         skew_s: Skew in seconds
         duration: Total duration to run the periodic sending.
     """
@@ -222,6 +213,7 @@ class CANDeviceListener:
     def __init__(
         self,
         alive_time=300,
+        memory=20,
         channel="can0",
         interface="virtual",
         bitrate=500000,
@@ -233,6 +225,7 @@ class CANDeviceListener:
         self.alive_time = alive_time
         self.fingerprint_map = {}
         self.number_of_intrusions = 0
+        self.memory = memory
 
     def start(self):
         # Initialize local CAN bus instance
@@ -261,6 +254,7 @@ class CANDeviceListener:
                     fingerprint.O_acc,
                     fingerprint.error,
                     fingerprint.mu_T,
+                    self.memory,
                 )
 
                 if len(fingerprint.error) >= 2:
@@ -304,7 +298,7 @@ def experiment_1():
 
 
 def experiment_2():
-    deviceC = CANDeviceListener(alive_time=300)
+    deviceC = CANDeviceListener(alive_time=300, memory=0)
 
     deviceA_messages = [
         can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True),
@@ -360,15 +354,18 @@ def experiment_2():
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
 
+
 def experiment_3():
-    deviceC = CANDeviceListener(alive_time=600)
+    deviceC = CANDeviceListener(alive_time=600, memory=0)
 
     deviceA_messages = [
         can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True),
         can.Message(arbitration_id=0x13, data=[0, 1, 0], is_extended_id=True),
     ]
 
-    deviceB_message = can.Message(arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True)
+    deviceB_message = can.Message(
+        arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True
+    )
 
     deviceA = CANDevice(deviceA_messages, period=0.5, skew_per_period=0.01)
     deviceB = CANDevice([deviceB_message], period=0.5, skew_per_period=0.01)
@@ -376,8 +373,10 @@ def experiment_3():
     deviceB.start()
     deviceA.start()
 
-    injection_thread = threading.Thread(target=deviceB.send_fabricated_message, args=(400, deviceA_messages[0]))
-    
+    injection_thread = threading.Thread(
+        target=deviceB.send_fabricated_message, args=(400, deviceA_messages[0])
+    )
+
     injection_thread.start()
 
     deviceC.start()
@@ -410,6 +409,7 @@ def experiment_3():
 
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
+
 
 if __name__ == "__main__":
     # experiment_1()
