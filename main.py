@@ -196,6 +196,10 @@ class CANDevice:
             )
             thread.start()
 
+    def send_fabricated_message(self, seconds, message):
+        time.sleep(seconds)
+        self.bus.send(message)
+
 
 delta_I = 1.0
 
@@ -356,7 +360,58 @@ def experiment_2():
     while not deviceC.bus._is_shutdown:
         deviceC.bus.shutdown()
 
+def experiment_3():
+    deviceC = CANDeviceListener(alive_time=600)
+
+    deviceA_messages = [
+        can.Message(arbitration_id=0x11, data=[1, 0, 0], is_extended_id=True),
+        can.Message(arbitration_id=0x13, data=[0, 1, 0], is_extended_id=True),
+    ]
+
+    deviceB_message = can.Message(arbitration_id=0x55, data=[1, 1, 1], is_extended_id=True)
+
+    deviceA = CANDevice(deviceA_messages, period=0.5, skew_per_period=0.01)
+    deviceB = CANDevice([deviceB_message], period=0.5, skew_per_period=0.01)
+
+    deviceB.start()
+    deviceA.start()
+
+    injection_thread = threading.Thread(target=deviceB.send_fabricated_message, args=(400, deviceA_messages[0]))
+    
+    injection_thread.start()
+
+    deviceC.start()
+
+    plt.figure(figsize=(10, 6))
+
+    timestamps_x11 = [
+        x - deviceC.fingerprint_map[0x11].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x11].arrival_timestamps
+    ]
+
+    timestamps_x13 = [
+        x - deviceC.fingerprint_map[0x13].arrival_timestamps[0]
+        for x in deviceC.fingerprint_map[0x13].arrival_timestamps
+    ]
+
+    O_acc_x11 = deviceC.fingerprint_map[0x11].O_acc
+    O_acc_x13 = deviceC.fingerprint_map[0x13].O_acc
+
+    plt.plot(timestamps_x11, O_acc_x11, label="0x11", linestyle="--")
+    plt.plot(timestamps_x13, O_acc_x13, label="0x13", linestyle="-.")
+
+    plt.xlabel("Time[Sec]", fontsize=14, weight="bold")
+    plt.ylabel("Accumulated Clock Offset [ms]", fontsize=14, weight="bold")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig("./graph_experiment_3.pdf")
+
+    while not deviceC.bus._is_shutdown:
+        deviceC.bus.shutdown()
 
 if __name__ == "__main__":
     # experiment_1()
-    experiment_2()
+    # experiment_2()
+    experiment_3()
